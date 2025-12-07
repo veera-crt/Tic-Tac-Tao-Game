@@ -409,6 +409,18 @@
         let iWantRematch = false;
         let opponentWantsRematch = false;
 
+        const peerConfig = {
+            config: {
+                'iceServers': [
+                    { url: 'stun:stun.l.google.com:19302' },
+                    { url: 'stun:stun1.l.google.com:19302' },
+                    { url: 'stun:stun2.l.google.com:19302' },
+                    { url: 'stun:stun3.l.google.com:19302' },
+                    { url: 'stun:stun4.l.google.com:19302' }
+                ]
+            }
+        };
+
         const winningConditions = [
             [0, 1, 2], [3, 4, 5], [6, 7, 8],
             [0, 3, 6], [1, 4, 7], [2, 5, 8],
@@ -479,7 +491,8 @@
 
             const peerId = 'ttt-vp-' + currentRoomCode;
 
-            peer = new Peer(peerId);
+            // Updated with STUN config
+            peer = new Peer(peerId, peerConfig);
 
             peer.on('open', (id) => {
                 myPlayer = 'X';
@@ -513,12 +526,15 @@
             }
             currentRoomCode = inputCode;
             messageDisplay.innerText = "Connecting...";
-            peer = new Peer(); // Auto-generate ID for joiner
+
+            // Updated with STUN config
+            peer = new Peer(undefined, peerConfig);
 
             peer.on('open', (id) => {
                 const targetPeerId = 'ttt-vp-' + inputCode;
                 conn = peer.connect(targetPeerId);
 
+                // Add delay or check connection open status more robustly
                 conn.on('open', () => {
                     myPlayer = 'O';
                     roomDisplay.innerText = inputCode;
@@ -535,6 +551,11 @@
                     messageDisplay.innerText = "Connection failed. Check Room Code.";
                     setTimeout(() => selectMode('online'), 2000);
                 });
+            });
+
+            peer.on('error', (err) => {
+                console.error("Peer Error:", err);
+                messageDisplay.innerText = "Could not connect to Peer Server.";
             });
         }
 
