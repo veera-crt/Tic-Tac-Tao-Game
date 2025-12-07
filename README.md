@@ -1,6 +1,6 @@
 # Tic-Tac-Toe Game - Modern Edition
 
-A visually stunning, browser-based Tic-Tac-Toe game built with HTML, CSS, and JavaScript. This project showcases modern web design principles and AI logic.
+A visually stunning, browser-based Tic-Tac-Toe game built with HTML, CSS, JavaScript, and Flask (Python). This project showcases modern web design principles, AI logic, and real-time multiplayer capabilities.
 
 ## Features
 
@@ -9,23 +9,43 @@ A visually stunning, browser-based Tic-Tac-Toe game built with HTML, CSS, and Ja
 -   **Game Modes:**
     -   **Play vs Friend:** Classic local multiplayer.
     -   **Play vs AI:** Challenge the computer with three difficulty levels (Easy, Medium, Hard).
+    -   **Online Multiplayer:** Create private rooms and play with friends in real-time!
 -   **Smart AI:** The "Hard" difficulty uses the Minimax algorithm for unbeatable gameplay.
 -   **Visual Effects:** Smooth animations, hover effects, and a celebratory confetti explosion on win!
 
-## How to Play
+## Installation & Setup
 
-1.  Open `index.html` in any modern web browser.
-2.  Select your game mode (Friend or AI).
-3.  If playing against AI, choose your difficulty.
-4.  Click on the grid cells to place your mark (X).
-5.  Get three in a row to win!
+To play the **Online Multiplayer** mode, you need to set up the backend.
+
+### Prerequisites
+-   Python 3.x installed
+-   `pip` (Python package manager)
+
+### Steps
+
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/veera-crt/Tic-Tac-Tao-Game.git
+    cd Tic-Tac-Tao-Game
+    ```
+
+2.  **Install dependencies:**
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+3.  **Run the application:**
+    ```bash
+    python3 app.py
+    ```
+
+4.  **Open in Browser:**
+    Navigate to `http://127.0.0.1:8080`
 
 ## Technologies Used
 
--   HTML5
--   CSS3 (Variables, Flexbox, Grid, Animations, Backdrop Filter)
--   JavaScript (ES6+)
--   Canvas Confetti (External Library)
+-   **Frontend:** HTML5, CSS3 (Glassmorphism), JavaScript (ES6+), Canvas Confetti
+-   **Backend:** Python, Flask, Flask-SocketIO (for real-time communication)
 
 ## AI Logic
 
