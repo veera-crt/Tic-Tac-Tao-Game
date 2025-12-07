@@ -7,7 +7,7 @@
     <title>Tic Tac Toe | Modern Edition</title>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         :root {
             --bg-color: #0f172a;
@@ -30,7 +30,6 @@
             margin: 0;
             color: var(--text-color);
             overflow: hidden;
-            /* Prevent scroll on some mobile views */
         }
 
         /* Background animated blobs */
@@ -194,7 +193,6 @@
         .message {
             margin-top: 1.5rem;
             min-height: 1.6em;
-            /* Prevent layout shift */
             font-size: 1.25rem;
             font-weight: 600;
             color: #bdc3c7;
@@ -247,6 +245,27 @@
             background: rgba(0, 0, 0, 0.2);
             padding: 8px;
             border-radius: 8px;
+            user-select: all;
+            /* Makes copying easier */
+        }
+
+        .notification-toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+        }
+
+        .notification-toast.show {
+            opacity: 1;
         }
 
         /* Responsive adjustments */
@@ -288,7 +307,7 @@
         </div>
 
         <div class="online-selection hidden" id="onlineSelection">
-            <button onclick="createRoom()">Create Room</button>
+            <button id="createRoomBtn" onclick="createRoom()">Create Room</button>
             <div>
                 <input type="text" id="roomCodeInput" placeholder="Enter Room Code" maxlength="6">
                 <button onclick="joinRoom()">Join Room</button>
@@ -317,6 +336,8 @@
         </div>
     </div>
 
+    <div id="toast" class="notification-toast"></div>
+
     <script>
         const boardElement = document.getElementById('board');
         const cells = document.querySelectorAll('.cell');
@@ -337,10 +358,10 @@
         let isOnlineMode = false;
         let difficultyLevel = 'advanced';
 
-        // Online specific variables
-        let socket;
-        let currentRoomId = null;
-        let myPlayer = null; // 'X' or 'O'
+        // PeerJS variables
+        let peer;
+        let conn;
+        let myPlayer = 'X'; // Creator is X, Joiner is O
 
         const winningConditions = [
             [0, 1, 2], [3, 4, 5], [6, 7, 8],
@@ -361,22 +382,27 @@
             onlineModeBtn.classList.remove('active-mode');
             difficultySelection.classList.add('hidden');
             onlineSelection.classList.add('hidden');
-            restartButton.classList.add('hidden'); // Hide restart by default until game starts
+            restartButton.classList.add('hidden');
             roomDisplay.classList.add('hidden');
-            boardElement.classList.add('hidden'); // Hide board until game starts
+            boardElement.classList.add('hidden');
+
+            // Cleanup PeerJS if leaving online mode
+            if (peer && mode !== 'online') {
+                peer.destroy();
+                peer = null;
+            }
 
             if (mode === 'friend') {
                 friendModeBtn.classList.add('active-mode');
-                startGame(); // Start immediately for local friend mode
+                startGame();
             } else if (mode === 'computer') {
                 computerModeBtn.classList.add('active-mode');
                 difficultySelection.classList.remove('hidden');
-                startGame(); // Start immediately for AI mode
+                startGame();
             } else if (mode === 'online') {
                 onlineModeBtn.classList.add('active-mode');
                 onlineSelection.classList.remove('hidden');
                 messageDisplay.innerText = "Create or Join a Room";
-                if (!socket) initSocket();
             }
         }
 
@@ -389,103 +415,176 @@
             startGame();
         }
 
-        function initSocket() {
-            socket = io();
+        // --- PeerJS Logic ---
 
-            socket.on('game_created', (data) => {
-                currentRoomId = data.room_id;
-                myPlayer = data.player; // Should be 'X'
-                roomDisplay.innerText = `Room Code: ${currentRoomId}`;
-                roomDisplay.classList.remove('hidden');
-                onlineSelection.classList.add('hidden');
-                messageDisplay.innerText = "Waiting for opponent...";
-            });
-
-            socket.on('game_joined', (data) => {
-                currentRoomId = data.room_id;
-                myPlayer = data.player; // Should be 'O'
-                roomDisplay.innerText = `Room Code: ${currentRoomId}`;
-                roomDisplay.classList.remove('hidden');
-                onlineSelection.classList.add('hidden');
-                messageDisplay.innerText = "Connected! Game starting...";
-            });
-
-            socket.on('player_joined', (data) => {
-                // Opponent joined my game
-                messageDisplay.innerText = "Opponent joined! Game starting...";
-            });
-
-            socket.on('game_start', (data) => {
-                turn = data.turn;
-                boardState = Array(9).fill('');
-                isGameActive = true;
-                boardElement.classList.remove('hidden');
-                updateBoardUI();
-                updateMessage();
-                // Hide restart button in online mode usually, or handle sync reset.
-                // For simplicity, we won't show restart button in online mode unless implemented fully.
-            });
-
-            socket.on('update_board', (data) => {
-                boardState[data.index] = data.player;
-                turn = data.next_turn;
-                updateBoardUI();
-                checkResult(data.player);
-                if (isGameActive) updateMessage();
-            });
-
-            socket.on('opponent_left', () => {
-                messageDisplay.innerText = "Opponent disconnected.";
-                isGameActive = false;
-                setTimeout(() => {
-                    selectMode('online'); // Reset to menu
-                }, 3000);
-            });
-
-            socket.on('error', (data) => {
-                alert(data.message);
-            });
+        function generateRoomCode() {
+            // Generate a random 6-character code (A-Z, 0-9)
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+            let result = '';
+            for (let i = 0; i < 6; i++) {
+                result += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return result;
         }
 
         function createRoom() {
-            socket.emit('create_game');
+            const roomCode = generateRoomCode();
+            messageDisplay.innerText = "Creating Room...";
+
+            // Initialize Peer with custom ID (the room code)
+            // Note: PeerJS ID must be unique. If random collision (rare), we could retry.
+            // Using a prefix to avoid collisions with other users on shared server
+            const peerId = 'ttt-vp-' + roomCode;
+
+            peer = new Peer(peerId);
+
+            peer.on('open', (id) => {
+                myPlayer = 'X';
+                roomDisplay.innerText = `Room Code: ${roomCode}`;
+                roomDisplay.classList.remove('hidden');
+                onlineSelection.classList.add('hidden');
+                messageDisplay.innerText = "Waiting for player to join...";
+                copyToClipboard(roomCode);
+                showToast("Room Code copied to clipboard!");
+            });
+
+            peer.on('connection', (connection) => {
+                conn = connection;
+                setupConnection();
+                messageDisplay.innerText = "Player connected! Game starting...";
+                startGame(); // Creator starts game
+                // Send initial start signal
+                setTimeout(() => {
+                    if (conn && conn.open) {
+                        conn.send({ type: 'start' });
+                    }
+                }, 500);
+            });
+
+            peer.on('error', (err) => {
+                console.error(err);
+                if (err.type === 'unavailable-id') {
+                    // Start over if collision
+                    createRoom();
+                } else {
+                    alert("Connection Error: " + err.type);
+                }
+            });
         }
 
         function joinRoom() {
-            const code = document.getElementById('roomCodeInput').value.toUpperCase();
-            if (code.length === 6) {
-                socket.emit('join_game', { room_id: code });
-            } else {
+            const inputCode = document.getElementById('roomCodeInput').value.toUpperCase();
+            if (inputCode.length !== 6) {
                 alert("Please enter a valid 6-character room code.");
+                return;
             }
+
+            messageDisplay.innerText = "Connecting...";
+            peer = new Peer(); // Auto-generate ID for joiner
+
+            peer.on('open', (id) => {
+                const targetPeerId = 'ttt-vp-' + inputCode;
+                conn = peer.connect(targetPeerId);
+
+                conn.on('open', () => {
+                    myPlayer = 'O';
+                    roomDisplay.innerText = `Room Code: ${inputCode}`;
+                    roomDisplay.classList.remove('hidden');
+                    onlineSelection.classList.add('hidden');
+                    messageDisplay.innerText = "Connected! Waiting for host...";
+                    setupConnection();
+                });
+
+                peer.on('error', (err) => {
+                    console.error(err);
+                    messageDisplay.innerText = "Connection failed. Check Room Code.";
+                    selectMode('online'); // Reset
+                });
+            });
+        }
+
+        function setupConnection() {
+            conn.on('data', (data) => {
+                if (data.type === 'start') {
+                    startGame();
+                } else if (data.type === 'move') {
+                    handleRemoteMove(data.index, data.player);
+                } else if (data.type === 'restart') {
+                    startGame();
+                } else if (data.type === 'quit') {
+                    alert("Opponent left the game.");
+                    location.reload();
+                }
+            });
+
+            conn.on('close', () => {
+                alert("Connection lost.");
+                location.reload();
+            });
         }
 
         function startGame() {
-            if (isOnlineMode) return; // Online game starts via socket event
-
+            // For online, game starts when connection logic says so
             turn = 'X';
             boardState = Array(9).fill('');
             isGameActive = true;
-            messageDisplay.innerText = "Player X's Turn";
+
             boardElement.classList.remove('hidden');
-            restartButton.classList.remove('hidden');
-            updateBoardUI();
+            if (!isOnlineMode) restartButton.classList.remove('hidden');
+
+            cells.forEach(cell => {
+                cell.innerText = '';
+                cell.className = 'cell';
+            });
+            updateMessage();
         }
 
         function restartGame() {
             if (isOnlineMode) {
-                // Not implemented for online in this simple version, could emit 'restart_request'
-                alert("Restarting multiplayer game not supported yet. Please recreate room.");
+                // Send restart signal
+                if (conn && conn.open) {
+                    conn.send({ type: 'restart' });
+                    startGame();
+                }
             } else {
                 startGame();
             }
         }
 
-        function updateBoardUI() {
-            cells.forEach((cell, index) => {
-                cell.innerText = boardState[index];
-                cell.className = 'cell ' + boardState[index];
-            });
+        function handleCellClick(index) {
+            if (boardState[index] !== '' || !isGameActive) return;
+
+            if (isOnlineMode) {
+                if (turn !== myPlayer) return; // Not my turn
+
+                // Send move 
+                if (conn && conn.open) {
+                    conn.send({ type: 'move', index: index, player: myPlayer });
+                    makeMove(index, myPlayer); // Apply locally immediately
+                }
+
+            } else {
+                makeMove(index, turn);
+                if (isGameActive && isComputerMode) {
+                    setTimeout(computerTurn, 400);
+                }
+            }
+        }
+
+        function handleRemoteMove(index, player) {
+            makeMove(index, player);
+        }
+
+        function makeMove(index, player) {
+            boardState[index] = player;
+            const cell = cells[index];
+            cell.innerText = player;
+            cell.classList.add(player);
+
+            if (checkResult(player)) return;
+
+            turn = turn === 'X' ? 'O' : 'X';
+            updateMessage();
         }
 
         function updateMessage() {
@@ -496,36 +595,13 @@
                     messageDisplay.innerText = `Opponent's Turn (${turn})`;
                 }
             } else {
-                messageDisplay.innerText = `Player ${turn}'s Turn`;
-            }
-        }
-
-        function handleCellClick(index) {
-            if (boardState[index] !== '' || !isGameActive) return;
-
-            if (isOnlineMode) {
-                if (turn !== myPlayer) return; // Not my turn
-                // Optimistic UI update could be done here, but let's wait for server for consistency or emit immediately
-                socket.emit('make_move', { room_id: currentRoomId, index: index, player: myPlayer });
-            } else {
-                makeMove(index, turn);
-                if (isGameActive && isComputerMode) {
-                    setTimeout(computerTurn, 400);
+                if (isGameActive) {
+                    if (isComputerMode) {
+                        messageDisplay.innerText = (turn === 'X') ? "Your Turn" : "Computer Thinking...";
+                    } else {
+                        messageDisplay.innerText = `Player ${turn}'s Turn`;
+                    }
                 }
-            }
-        }
-
-        function makeMove(index, player) {
-            boardState[index] = player;
-            updateBoardUI();
-
-            if (checkResult(player)) return;
-
-            turn = turn === 'X' ? 'O' : 'X';
-            if (isGameActive && (!isComputerMode || turn === 'X')) {
-                messageDisplay.innerText = `Player ${turn}'s Turn`;
-            } else if (isGameActive && isComputerMode) {
-                messageDisplay.innerText = "Computer is thinking...";
             }
         }
 
@@ -546,6 +622,12 @@
                         launchConfetti();
                     }
                 }
+                setTimeout(() => {
+                    if (isOnlineMode && myPlayer === 'X' && !document.getElementById('restartBtnOnline')) {
+                        // Maybe show a restart button for host?
+                        // For now we just let them reload or implementing restart logic is tricky with P2P sync
+                    }
+                }, 1000);
                 return true;
             }
             return false;
@@ -553,92 +635,47 @@
 
         function computerTurn() {
             if (!isGameActive) return;
-
+            // ... (AI Logic unchanged) ...
             let bestMove;
-            if (difficultyLevel === 'beginner') {
-                bestMove = findRandomMove();
-            } else if (difficultyLevel === 'intermediate') {
-                bestMove = findIntermediateMove();
-            } else {
-                bestMove = findBestMove();
-            }
+            if (difficultyLevel === 'beginner') bestMove = findRandomMove();
+            else if (difficultyLevel === 'intermediate') bestMove = findIntermediateMove();
+            else bestMove = findBestMove();
 
-            if (bestMove !== -1) {
-                makeMove(bestMove, 'O');
-            }
+            if (bestMove !== -1) makeMove(bestMove, 'O');
         }
 
-        // AI Logic Helpers
+        // AI Logic Helpers (Same as before)
         function findRandomMove() {
             const availableMoves = boardState.map((val, idx) => val === '' ? idx : null).filter(val => val !== null);
             if (availableMoves.length === 0) return -1;
             return availableMoves[Math.floor(Math.random() * availableMoves.length)];
         }
-
         function findIntermediateMove() {
             for (let i = 0; i < 9; i++) {
-                if (boardState[i] === '') {
-                    boardState[i] = 'O';
-                    if (checkWinner(boardState) === 'O') {
-                        boardState[i] = ''; return i;
-                    }
-                    boardState[i] = '';
-                }
+                if (boardState[i] === '') { boardState[i] = 'O'; if (checkWinner(boardState) === 'O') { boardState[i] = ''; return i; } boardState[i] = ''; }
             }
             for (let i = 0; i < 9; i++) {
-                if (boardState[i] === '') {
-                    boardState[i] = 'X';
-                    if (checkWinner(boardState) === 'X') {
-                        boardState[i] = ''; return i;
-                    }
-                    boardState[i] = '';
-                }
+                if (boardState[i] === '') { boardState[i] = 'X'; if (checkWinner(boardState) === 'X') { boardState[i] = ''; return i; } boardState[i] = ''; }
             }
             return findRandomMove();
         }
-
         function findBestMove() {
-            let bestScore = -Infinity;
-            let move = -1;
+            let bestScore = -Infinity; let move = -1;
             for (let i = 0; i < 9; i++) {
-                if (boardState[i] === '') {
-                    boardState[i] = 'O';
-                    let score = minimax(boardState, 0, false);
-                    boardState[i] = '';
-                    if (score > bestScore) {
-                        bestScore = score;
-                        move = i;
-                    }
-                }
+                if (boardState[i] === '') { boardState[i] = 'O'; let score = minimax(boardState, 0, false); boardState[i] = ''; if (score > bestScore) { bestScore = score; move = i; } }
             }
             return move;
         }
-
         const scores = { X: -10, O: 10, draw: 0 };
         function minimax(board, depth, isMaximizing) {
-            let result = checkWinner(board);
-            if (result !== null) return scores[result];
+            let result = checkWinner(board); if (result !== null) return scores[result];
             if (isMaximizing) {
                 let bestScore = -Infinity;
-                for (let i = 0; i < 9; i++) {
-                    if (board[i] === '') {
-                        board[i] = 'O';
-                        let score = minimax(board, depth + 1, false);
-                        board[i] = '';
-                        bestScore = Math.max(score, bestScore);
-                    }
-                }
+                for (let i = 0; i < 9; i++) { if (board[i] === '') { board[i] = 'O'; let score = minimax(board, depth + 1, false); board[i] = ''; bestScore = Math.max(score, bestScore); } }
                 return bestScore;
             } else {
                 let bestScore = Infinity;
-                for (let i = 0; i < 9; i++) {
-                    if (board[i] === '') {
-                        board[i] = 'X';
-                        let score = minimax(board, depth + 1, true);
-                        board[i] = '';
-                        bestScore = Math.min(score, bestScore);
-                    }
-                }
+                for (let i = 0; i < 9; i++) { if (board[i] === '') { board[i] = 'X'; let score = minimax(board, depth + 1, true); board[i] = ''; bestScore = Math.min(score, bestScore); } }
                 return bestScore;
             }
         }
@@ -646,36 +683,34 @@
         function checkWinner(board) {
             for (let condition of winningConditions) {
                 const [a, b, c] = condition;
-                if (board[a] && board[a] === board[b] && board[a] === board[c]) {
-                    return board[a];
-                }
+                if (board[a] && board[a] === board[b] && board[a] === board[c]) return board[a];
             }
             if (!board.includes('')) return 'draw';
             return null;
         }
 
         function launchConfetti() {
-            var duration = 3000;
-            var end = Date.now() + duration;
+            var duration = 3000; var end = Date.now() + duration;
             (function frame() {
-                confetti({
-                    particleCount: 3,
-                    angle: 60,
-                    spread: 55,
-                    origin: { x: 0 },
-                    colors: ['#00e5ff', '#ff4081']
-                });
-                confetti({
-                    particleCount: 3,
-                    angle: 120,
-                    spread: 55,
-                    origin: { x: 1 },
-                    colors: ['#00e5ff', '#ff4081']
-                });
-                if (Date.now() < end) {
-                    requestAnimationFrame(frame);
-                }
+                confetti({ particleCount: 3, angle: 60, spread: 55, origin: { x: 0 }, colors: ['#00e5ff', '#ff4081'] });
+                confetti({ particleCount: 3, angle: 120, spread: 55, origin: { x: 1 }, colors: ['#00e5ff', '#ff4081'] });
+                if (Date.now() < end) requestAnimationFrame(frame);
             }());
+        }
+
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).catch(err => {
+                console.error('Failed to copy: ', err);
+            });
+        }
+
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.innerText = message;
+            toast.classList.add('show');
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
         }
     </script>
 </body>
