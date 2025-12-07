@@ -18,6 +18,7 @@
             --glass-border: rgba(255, 255, 255, 0.1);
             --glow-x: #00e5ff;
             --glow-o: #ff4081;
+            --danger-color: #ef4444;
         }
 
         body {
@@ -260,6 +261,23 @@
             font-size: 0.9rem;
         }
 
+        .game-over-controls {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 1.5rem;
+        }
+
+        .exit-btn {
+            background: rgba(239, 68, 68, 0.2);
+            border-color: rgba(239, 68, 68, 0.4);
+            color: #fca5a5;
+        }
+
+        .exit-btn:hover {
+            background: rgba(239, 68, 68, 0.4);
+        }
+
         .notification-toast {
             position: fixed;
             bottom: 20px;
@@ -344,6 +362,12 @@
         </div>
 
         <button id="restart" class="hidden" onclick="restartGame()">Restart</button>
+
+        <div id="gameOverControls" class="hidden game-over-controls">
+            <button onclick="onPlayAgain()">Play Again</button>
+            <button onclick="onExitGame()" class="exit-btn">Exit</button>
+        </div>
+
         <div class="message" id="message"></div>
 
         <div class="footer">
@@ -358,6 +382,7 @@
         const cells = document.querySelectorAll('.cell');
         const messageDisplay = document.getElementById('message');
         const restartButton = document.getElementById('restart');
+        const gameOverControls = document.getElementById('gameOverControls');
         const modeSelection = document.getElementById('modeSelection');
         const difficultySelection = document.getElementById('difficultySelection');
         const onlineSelection = document.getElementById('onlineSelection');
@@ -380,6 +405,10 @@
         let conn;
         let myPlayer = 'X'; // Creator is X, Joiner is O
 
+        // Rematch State
+        let iWantRematch = false;
+        let opponentWantsRematch = false;
+
         const winningConditions = [
             [0, 1, 2], [3, 4, 5], [6, 7, 8],
             [0, 3, 6], [1, 4, 7], [2, 5, 8],
@@ -400,6 +429,7 @@
             difficultySelection.classList.add('hidden');
             onlineSelection.classList.add('hidden');
             restartButton.classList.add('hidden');
+            gameOverControls.classList.add('hidden');
             roomDisplayContainer.classList.add('hidden');
             boardElement.classList.add('hidden');
 
@@ -521,17 +551,25 @@
                     startGame();
                 } else if (data.type === 'move') {
                     handleRemoteMove(data.index, data.player);
-                } else if (data.type === 'restart') {
-                    startGame();
-                } else if (data.type === 'quit') {
+                } else if (data.type === 'request_rematch') {
+                    opponentWantsRematch = true;
+                    if (iWantRematch) {
+                        startGame(); // Match! Both agreed.
+                    } else {
+                        messageDisplay.innerText = "Opponent wants to play again!";
+                    }
+                } else if (data.type === 'decline_rematch') {
                     alert("Opponent left the game.");
-                    location.reload();
+                    exitOnlineGame();
+                } else if (data.type === 'quit') {
+                    alert("Opponent disconnected.");
+                    exitOnlineGame();
                 }
             });
 
             conn.on('close', () => {
                 alert("Connection lost.");
-                location.reload();
+                exitOnlineGame();
             });
         }
 
@@ -540,8 +578,18 @@
             boardState = Array(9).fill('');
             isGameActive = true;
 
+            // Reset rematch state
+            iWantRematch = false;
+            opponentWantsRematch = false;
+
             boardElement.classList.remove('hidden');
-            if (!isOnlineMode) restartButton.classList.remove('hidden');
+            gameOverControls.classList.add('hidden');
+
+            if (!isOnlineMode) {
+                restartButton.classList.remove('hidden');
+            } else {
+                restartButton.classList.add('hidden'); // Ensure hidden in online
+            }
 
             cells.forEach(cell => {
                 cell.innerText = '';
@@ -551,14 +599,39 @@
         }
 
         function restartGame() {
-            if (isOnlineMode) {
-                if (conn && conn.open) {
-                    conn.send({ type: 'restart' });
-                    startGame();
-                }
-            } else {
+            // Local restart only
+            if (!isOnlineMode) {
                 startGame();
             }
+        }
+
+        function onPlayAgain() {
+            iWantRematch = true;
+            gameOverControls.classList.add('hidden');
+            messageDisplay.innerText = "Waiting for opponent...";
+
+            if (conn && conn.open) {
+                conn.send({ type: 'request_rematch' });
+            }
+
+            if (opponentWantsRematch) {
+                startGame(); // Match!
+            }
+        }
+
+        function onExitGame() {
+            if (conn && conn.open) {
+                conn.send({ type: 'decline_rematch' });
+            }
+            exitOnlineGame();
+        }
+
+        function exitOnlineGame() {
+            if (peer) {
+                peer.destroy();
+                peer = null;
+            }
+            selectMode('online'); // Go back to create/join
         }
 
         function handleCellClick(index) {
@@ -631,6 +704,11 @@
                         launchConfetti();
                     }
                 }
+
+                if (isOnlineMode) {
+                    gameOverControls.classList.remove('hidden');
+                }
+
                 return true;
             }
             return false;
