@@ -409,16 +409,20 @@
         let iWantRematch = false;
         let opponentWantsRematch = false;
 
+        // Detailed STUN configuration for better reliability
         const peerConfig = {
+            host: '0.peerjs.com',
+            port: 443,
+            secure: true,
             config: {
-                'iceServers': [
-                    { url: 'stun:stun.l.google.com:19302' },
-                    { url: 'stun:stun1.l.google.com:19302' },
-                    { url: 'stun:stun2.l.google.com:19302' },
-                    { url: 'stun:stun3.l.google.com:19302' },
-                    { url: 'stun:stun4.l.google.com:19302' }
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:stun2.l.google.com:19302' },
+                    { urls: 'stun:global.stun.twilio.com:3478' }
                 ]
-            }
+            },
+            debug: 2 // Print errors to console
         };
 
         const winningConditions = [
@@ -491,7 +495,7 @@
 
             const peerId = 'ttt-vp-' + currentRoomCode;
 
-            // Updated with STUN config
+            // Initialize Peer with specific ID
             peer = new Peer(peerId, peerConfig);
 
             peer.on('open', (id) => {
@@ -505,16 +509,23 @@
             peer.on('connection', (connection) => {
                 conn = connection;
                 setupConnection();
-                // Wait for 'join_ready' handshake
             });
 
             peer.on('error', (err) => {
                 console.error(err);
                 if (err.type === 'unavailable-id') {
                     createRoom(); // Retry on collision
+                } else if (err.type === 'peer-unavailable') {
+                    alert("Could not connect to peer server.");
                 } else {
-                    alert("Connection Error: " + err.type);
+                    messageDisplay.innerText = "Connection Error: " + err.type;
                 }
+            });
+
+            // Disconnected from PeerServer
+            peer.on('disconnected', () => {
+                messageDisplay.innerText = "Disconnected from Server. Reconnecting...";
+                peer.reconnect();
             });
         }
 
@@ -525,16 +536,21 @@
                 return;
             }
             currentRoomCode = inputCode;
-            messageDisplay.innerText = "Connecting...";
+            messageDisplay.innerText = "Connecting to Server...";
 
-            // Updated with STUN config
+            // Random ID for joiner
             peer = new Peer(undefined, peerConfig);
 
             peer.on('open', (id) => {
+                messageDisplay.innerText = "Searching for Room...";
                 const targetPeerId = 'ttt-vp-' + inputCode;
                 conn = peer.connect(targetPeerId);
 
-                // Add delay or check connection open status more robustly
+                if (!conn) {
+                    messageDisplay.innerText = "Connection Failed immediately.";
+                    return;
+                }
+
                 conn.on('open', () => {
                     myPlayer = 'O';
                     roomDisplay.innerText = inputCode;
@@ -546,16 +562,19 @@
                     conn.send({ type: 'join_ready' });
                 });
 
-                peer.on('error', (err) => {
+                conn.on('error', (err) => {
+                    messageDisplay.innerText = "Connection to Room Failed.";
                     console.error(err);
-                    messageDisplay.innerText = "Connection failed. Check Room Code.";
-                    setTimeout(() => selectMode('online'), 2000);
                 });
             });
 
             peer.on('error', (err) => {
                 console.error("Peer Error:", err);
-                messageDisplay.innerText = "Could not connect to Peer Server.";
+                if (err.type === 'peer-unavailable') {
+                    messageDisplay.innerText = "Room not found or Host offline.";
+                } else {
+                    messageDisplay.innerText = "Error: " + err.type;
+                }
             });
         }
 
@@ -591,6 +610,10 @@
             conn.on('close', () => {
                 alert("Connection lost.");
                 exitOnlineGame();
+            });
+
+            conn.on('error', (err) => {
+                console.error("Conn Error:", err);
             });
         }
 
