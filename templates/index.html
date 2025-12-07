@@ -237,16 +237,27 @@
             border-color: var(--primary-color);
         }
 
+        .room-display-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 1rem;
+        }
+
         .room-display {
             font-size: 1.2rem;
-            margin-bottom: 1rem;
             font-weight: 600;
             color: var(--glow-x);
             background: rgba(0, 0, 0, 0.2);
-            padding: 8px;
+            padding: 8px 16px;
             border-radius: 8px;
             user-select: all;
-            /* Makes copying easier */
+        }
+
+        .copy-btn {
+            padding: 8px 12px;
+            font-size: 0.9rem;
         }
 
         .notification-toast {
@@ -262,6 +273,7 @@
             opacity: 0;
             transition: opacity 0.3s;
             pointer-events: none;
+            z-index: 1000;
         }
 
         .notification-toast.show {
@@ -314,7 +326,10 @@
             </div>
         </div>
 
-        <div id="roomDisplay" class="hidden room-display"></div>
+        <div id="roomDisplayContainer" class="hidden room-display-container">
+            <div id="roomDisplay" class="room-display"></div>
+            <button class="copy-btn" onclick="copyRoomCode()">Copy</button>
+        </div>
 
         <div class="board hidden" id="board">
             <div class="cell" onclick="handleCellClick(0)" data-index="0"></div>
@@ -350,6 +365,7 @@
         const computerModeBtn = document.getElementById('computerMode');
         const onlineModeBtn = document.getElementById('onlineMode');
         const roomDisplay = document.getElementById('roomDisplay');
+        const roomDisplayContainer = document.getElementById('roomDisplayContainer');
 
         let turn = 'X';
         let boardState = ['', '', '', '', '', '', '', '', ''];
@@ -357,6 +373,7 @@
         let isComputerMode = false;
         let isOnlineMode = false;
         let difficultyLevel = 'advanced';
+        let currentRoomCode = '';
 
         // PeerJS variables
         let peer;
@@ -383,7 +400,7 @@
             difficultySelection.classList.add('hidden');
             onlineSelection.classList.add('hidden');
             restartButton.classList.add('hidden');
-            roomDisplay.classList.add('hidden');
+            roomDisplayContainer.classList.add('hidden');
             boardElement.classList.add('hidden');
 
             // Cleanup PeerJS if leaving online mode
@@ -418,7 +435,6 @@
         // --- PeerJS Logic ---
 
         function generateRoomCode() {
-            // Generate a random 6-character code (A-Z, 0-9)
             const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
             let result = '';
             for (let i = 0; i < 6; i++) {
@@ -428,44 +444,31 @@
         }
 
         function createRoom() {
-            const roomCode = generateRoomCode();
+            currentRoomCode = generateRoomCode();
             messageDisplay.innerText = "Creating Room...";
 
-            // Initialize Peer with custom ID (the room code)
-            // Note: PeerJS ID must be unique. If random collision (rare), we could retry.
-            // Using a prefix to avoid collisions with other users on shared server
-            const peerId = 'ttt-vp-' + roomCode;
+            const peerId = 'ttt-vp-' + currentRoomCode;
 
             peer = new Peer(peerId);
 
             peer.on('open', (id) => {
                 myPlayer = 'X';
-                roomDisplay.innerText = `Room Code: ${roomCode}`;
-                roomDisplay.classList.remove('hidden');
+                roomDisplay.innerText = currentRoomCode;
+                roomDisplayContainer.classList.remove('hidden');
                 onlineSelection.classList.add('hidden');
                 messageDisplay.innerText = "Waiting for player to join...";
-                copyToClipboard(roomCode);
-                showToast("Room Code copied to clipboard!");
             });
 
             peer.on('connection', (connection) => {
                 conn = connection;
                 setupConnection();
-                messageDisplay.innerText = "Player connected! Game starting...";
-                startGame(); // Creator starts game
-                // Send initial start signal
-                setTimeout(() => {
-                    if (conn && conn.open) {
-                        conn.send({ type: 'start' });
-                    }
-                }, 500);
+                // Wait for 'join_ready' handshake
             });
 
             peer.on('error', (err) => {
                 console.error(err);
                 if (err.type === 'unavailable-id') {
-                    // Start over if collision
-                    createRoom();
+                    createRoom(); // Retry on collision
                 } else {
                     alert("Connection Error: " + err.type);
                 }
@@ -478,7 +481,7 @@
                 alert("Please enter a valid 6-character room code.");
                 return;
             }
-
+            currentRoomCode = inputCode;
             messageDisplay.innerText = "Connecting...";
             peer = new Peer(); // Auto-generate ID for joiner
 
@@ -488,24 +491,33 @@
 
                 conn.on('open', () => {
                     myPlayer = 'O';
-                    roomDisplay.innerText = `Room Code: ${inputCode}`;
-                    roomDisplay.classList.remove('hidden');
+                    roomDisplay.innerText = inputCode;
+                    roomDisplayContainer.classList.remove('hidden');
                     onlineSelection.classList.add('hidden');
-                    messageDisplay.innerText = "Connected! Waiting for host...";
+                    messageDisplay.innerText = "Connected! Starting...";
                     setupConnection();
+                    // Send Handshake
+                    conn.send({ type: 'join_ready' });
                 });
 
                 peer.on('error', (err) => {
                     console.error(err);
                     messageDisplay.innerText = "Connection failed. Check Room Code.";
-                    selectMode('online'); // Reset
+                    setTimeout(() => selectMode('online'), 2000);
                 });
             });
         }
 
         function setupConnection() {
             conn.on('data', (data) => {
-                if (data.type === 'start') {
+                if (data.type === 'join_ready') {
+                    // Host received handshake, start game and notify joiner
+                    messageDisplay.innerText = "Player connected! Game starting...";
+                    startGame();
+                    if (conn && conn.open) conn.send({ type: 'start' });
+                } else if (data.type === 'start') {
+                    // Joiner received start signal
+                    messageDisplay.innerText = "Connected! Game starting...";
                     startGame();
                 } else if (data.type === 'move') {
                     handleRemoteMove(data.index, data.player);
@@ -524,7 +536,6 @@
         }
 
         function startGame() {
-            // For online, game starts when connection logic says so
             turn = 'X';
             boardState = Array(9).fill('');
             isGameActive = true;
@@ -541,7 +552,6 @@
 
         function restartGame() {
             if (isOnlineMode) {
-                // Send restart signal
                 if (conn && conn.open) {
                     conn.send({ type: 'restart' });
                     startGame();
@@ -557,10 +567,9 @@
             if (isOnlineMode) {
                 if (turn !== myPlayer) return; // Not my turn
 
-                // Send move 
                 if (conn && conn.open) {
                     conn.send({ type: 'move', index: index, player: myPlayer });
-                    makeMove(index, myPlayer); // Apply locally immediately
+                    makeMove(index, myPlayer);
                 }
 
             } else {
@@ -622,12 +631,6 @@
                         launchConfetti();
                     }
                 }
-                setTimeout(() => {
-                    if (isOnlineMode && myPlayer === 'X' && !document.getElementById('restartBtnOnline')) {
-                        // Maybe show a restart button for host?
-                        // For now we just let them reload or implementing restart logic is tricky with P2P sync
-                    }
-                }, 1000);
                 return true;
             }
             return false;
@@ -635,7 +638,6 @@
 
         function computerTurn() {
             if (!isGameActive) return;
-            // ... (AI Logic unchanged) ...
             let bestMove;
             if (difficultyLevel === 'beginner') bestMove = findRandomMove();
             else if (difficultyLevel === 'intermediate') bestMove = findIntermediateMove();
@@ -698,10 +700,12 @@
             }());
         }
 
-        function copyToClipboard(text) {
-            navigator.clipboard.writeText(text).catch(err => {
-                console.error('Failed to copy: ', err);
-            });
+        function copyRoomCode() {
+            if (currentRoomCode) {
+                navigator.clipboard.writeText(currentRoomCode).then(() => {
+                    showToast("Code Copied!");
+                });
+            }
         }
 
         function showToast(message) {
