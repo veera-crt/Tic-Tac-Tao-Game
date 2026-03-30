@@ -1,0 +1,27 @@
+'Log files:
+/Users/veerapandig/Projects/game/.npm_cache/_logs/2026-03-30T15_33_38_912Z-debug-0.log
+
+# npm resolution error report
+
+While resolving: vite-plugin-pwa@1.2.0
+Found: vite@8.0.3
+node_modules/vite
+  peer vite@"^8.0.0" from @vitejs/plugin-react@6.0.1
+  node_modules/@vitejs/plugin-react
+    dev @vitejs/plugin-react@"^6.0.1" from the root project
+  dev vite@"^8.0.1" from the root project
+
+Could not resolve dependency:
+peer vite@"^3.1.0 || ^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0" from vite-plugin-pwa@1.2.0
+node_modules/vite-plugin-pwa
+  vite-plugin-pwa@"^1.2.0" from the root project
+
+Conflicting peer dependency: vite@7.3.1
+node_modules/vite
+  peer vite@"^3.1.0 || ^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0" from vite-plugin-pwa@1.2.0
+  node_modules/vite-plugin-pwa
+    vite-plugin-pwa@"^1.2.0" from the root project
+
+Fix the upstream dependency conflict, or retry
+this command with --force or --legacy-peer-deps
+to accept an incorrect (and potentially broken) dependency resolution.
